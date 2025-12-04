@@ -5,21 +5,33 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+interface LeadtimeStock {
+  merchant_warehouse: { warehouse_id: number; name: string | null };
+  quantity_available: number;
+}
+
 interface TakealotProduct {
-  offer_id: string;
+  offer_id: number;
   sku: string;
   title: string;
   selling_price: number;
-  leadtime_stock?: number;
+  leadtime_stock?: LeadtimeStock[];
   warehouse_stock?: number;
   image_url?: string;
   buy_box_winner?: boolean;
   cost_price?: number;
   rrp?: number;
+  status?: string;
 }
 
 // Fixed user ID for private use
 const PRIVATE_USER_ID = '00000000-0000-0000-0000-000000000001';
+
+// Helper to calculate total stock from leadtime_stock array
+function calculateStock(leadtimeStock: LeadtimeStock[] | undefined): number {
+  if (!leadtimeStock || !Array.isArray(leadtimeStock)) return 0;
+  return leadtimeStock.reduce((total, item) => total + (item.quantity_available || 0), 0);
+}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -37,58 +49,63 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    console.log(`Syncing products for private user`);
+    console.log('Syncing products for private user');
     console.log(`Using API key: ${takealotApiKey.substring(0, 20)}...`);
 
-    // Fetch products from Takealot API - Official endpoint
-    const takealotResponse = await fetch('https://seller-api.takealot.com/v2/offers', {
-      headers: {
-        'Authorization': `Key ${takealotApiKey}`,
-        'Content-Type': 'application/json',
-      },
-    });
+    // Fetch all products with pagination
+    let allProducts: TakealotProduct[] = [];
+    let page = 1;
+    let hasMore = true;
 
-    console.log(`Takealot API response status: ${takealotResponse.status}`);
+    while (hasMore) {
+      const takealotResponse = await fetch(`https://seller-api.takealot.com/v2/offers?page_number=${page}&page_size=100`, {
+        headers: {
+          'Authorization': `Key ${takealotApiKey}`,
+          'Content-Type': 'application/json',
+        },
+      });
 
-    if (!takealotResponse.ok) {
-      const errorText = await takealotResponse.text();
-      console.error('Takealot API error response:', errorText);
-      console.error('Response status:', takealotResponse.status);
-      console.error('Response headers:', Object.fromEntries(takealotResponse.headers.entries()));
-      throw new Error(`Takealot API error: ${takealotResponse.status} - ${errorText.substring(0, 200)}`);
+      console.log(`Takealot API page ${page} response status: ${takealotResponse.status}`);
+
+      if (!takealotResponse.ok) {
+        const errorText = await takealotResponse.text();
+        console.error('Takealot API error response:', errorText);
+        throw new Error(`Takealot API error: ${takealotResponse.status} - ${errorText.substring(0, 200)}`);
+      }
+
+      const takealotData = await takealotResponse.json();
+      
+      if (page === 1) {
+        console.log('Total results:', takealotData.total_results);
+      }
+      
+      const products: TakealotProduct[] = takealotData.offers || [];
+      allProducts = [...allProducts, ...products];
+      
+      hasMore = products.length === 100 && allProducts.length < takealotData.total_results;
+      page++;
+      
+      // Safety limit
+      if (page > 100) break;
     }
 
-    const takealotData = await takealotResponse.json();
-    console.log('Takealot API response structure:', JSON.stringify(takealotData).substring(0, 500));
-    
-    // Handle different possible response structures
-    let products: TakealotProduct[] = [];
-    if (Array.isArray(takealotData)) {
-      products = takealotData;
-    } else if (takealotData.data && Array.isArray(takealotData.data)) {
-      products = takealotData.data;
-    } else if (takealotData.offers && Array.isArray(takealotData.offers)) {
-      products = takealotData.offers;
-    } else if (takealotData.results && Array.isArray(takealotData.results)) {
-      products = takealotData.results;
-    }
-
-    console.log(`Fetched ${products.length} products from Takealot`);
+    console.log(`Fetched ${allProducts.length} products from Takealot`);
 
     let syncedCount = 0;
     let createdCount = 0;
     let updatedCount = 0;
 
-    // Process each product
-    for (const takealotProduct of products) {
-      const stock = (takealotProduct.leadtime_stock || 0) + (takealotProduct.warehouse_stock || 0);
+    for (const takealotProduct of allProducts) {
+      // Calculate stock from leadtime_stock array
+      const stock = calculateStock(takealotProduct.leadtime_stock);
+      const offerId = String(takealotProduct.offer_id);
       
       // Check if product exists
       const { data: existingProducts, error: queryError } = await supabase
         .from('products')
         .select('*')
         .eq('user_id', PRIVATE_USER_ID)
-        .or(`sku.eq.${takealotProduct.sku},takealot_offer_id.eq.${takealotProduct.offer_id}`);
+        .or(`sku.eq.${takealotProduct.sku},takealot_offer_id.eq.${offerId}`);
 
       if (queryError) {
         console.error('Error querying products:', queryError);
@@ -98,7 +115,6 @@ Deno.serve(async (req) => {
       const now = new Date().toISOString();
 
       if (existingProducts && existingProducts.length > 0) {
-        // Update existing product
         const existing = existingProducts[0];
         
         // Log price change if price changed
@@ -117,11 +133,10 @@ Deno.serve(async (req) => {
             title: takealotProduct.title,
             current_price: takealotProduct.selling_price,
             stock_quantity: stock,
-            takealot_offer_id: takealotProduct.offer_id,
+            takealot_offer_id: offerId,
             last_synced_at: now,
             image_url: takealotProduct.image_url || existing.image_url,
-            buy_box_status: takealotProduct.buy_box_winner ? 'won' : 'lost',
-            cost_price: takealotProduct.cost_price || existing.cost_price,
+            buy_box_status: takealotProduct.buy_box_winner ? 'won' : (takealotProduct.status === 'Buyable' ? 'unknown' : 'lost'),
           })
           .eq('id', existing.id);
         
@@ -131,19 +146,17 @@ Deno.serve(async (req) => {
           updatedCount++;
         }
       } else {
-        // Create new product
         const { error: insertError } = await supabase.from('products').insert({
           user_id: PRIVATE_USER_ID,
           sku: takealotProduct.sku,
           title: takealotProduct.title,
           current_price: takealotProduct.selling_price,
           stock_quantity: stock,
-          takealot_offer_id: takealotProduct.offer_id,
+          takealot_offer_id: offerId,
           last_synced_at: now,
           image_url: takealotProduct.image_url,
           buy_box_status: takealotProduct.buy_box_winner ? 'won' : 'unknown',
-          is_active: true,
-          cost_price: takealotProduct.cost_price,
+          is_active: takealotProduct.status === 'Buyable',
         });
         
         if (insertError) {
@@ -156,14 +169,6 @@ Deno.serve(async (req) => {
       syncedCount++;
     }
 
-    // Update last sync time in profiles
-    await supabase
-      .from('profiles')
-      .upsert({
-        user_id: PRIVATE_USER_ID,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'user_id' });
-
     console.log(`Sync complete: ${createdCount} created, ${updatedCount} updated`);
 
     return new Response(
@@ -172,6 +177,7 @@ Deno.serve(async (req) => {
         synced: syncedCount,
         created: createdCount,
         updated: updatedCount,
+        total_available: allProducts.length,
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
