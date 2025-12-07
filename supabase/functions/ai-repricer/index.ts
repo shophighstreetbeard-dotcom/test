@@ -2,7 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.86.0';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-api-key',
 };
 
 interface Product {
@@ -16,6 +16,7 @@ interface Product {
   buy_box_status: string | null;
   competitor_count: number | null;
   stock_quantity: number | null;
+  takealot_offer_id: string | null;
 }
 
 interface RepricingRule {
@@ -35,12 +36,31 @@ interface Competitor {
   has_buy_box: boolean | null;
 }
 
-// Fixed user ID for private use
-const PRIVATE_USER_ID = '00000000-0000-0000-0000-000000000001';
+// Verify API key authentication
+function verifyApiKey(req: Request): boolean {
+  const apiKey = req.headers.get('x-api-key');
+  const expectedKey = Deno.env.get('EDGE_FUNCTION_API_KEY');
+  
+  if (!expectedKey) {
+    console.warn('EDGE_FUNCTION_API_KEY not configured - authentication disabled');
+    return true; // Allow if not configured (for backward compatibility during setup)
+  }
+  
+  return apiKey === expectedKey;
+}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
+  }
+
+  // Verify API key
+  if (!verifyApiKey(req)) {
+    console.error('Unauthorized: Invalid or missing API key');
+    return new Response(
+      JSON.stringify({ error: 'Unauthorized: Invalid or missing API key' }),
+      { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
   }
 
   try {
@@ -54,24 +74,37 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    console.log('Starting AI-powered repricing analysis...');
+    // Get user_id from request body
+    let userId: string;
+    try {
+      const body = await req.json();
+      userId = body.user_id;
+    } catch {
+      throw new Error('Invalid request body');
+    }
 
-    // Fetch all products
+    if (!userId) {
+      throw new Error('user_id is required');
+    }
+
+    console.log(`Starting AI-powered repricing analysis for user: ${userId}`);
+
+    // Fetch all products for this user
     const { data: products, error: productsError } = await supabase
       .from('products')
       .select('*')
-      .eq('user_id', PRIVATE_USER_ID)
+      .eq('user_id', userId)
       .eq('is_active', true);
 
     if (productsError) {
       throw new Error(`Error fetching products: ${productsError.message}`);
     }
 
-    // Fetch all active repricing rules
+    // Fetch all active repricing rules for this user
     const { data: rules, error: rulesError } = await supabase
       .from('repricing_rules')
       .select('*')
-      .eq('user_id', PRIVATE_USER_ID)
+      .eq('user_id', userId)
       .eq('is_active', true)
       .order('priority', { ascending: true });
 
@@ -79,11 +112,11 @@ Deno.serve(async (req) => {
       throw new Error(`Error fetching rules: ${rulesError.message}`);
     }
 
-    // Fetch all competitors
+    // Fetch all competitors for this user
     const { data: competitors, error: competitorsError } = await supabase
       .from('competitors')
       .select('*')
-      .eq('user_id', PRIVATE_USER_ID);
+      .eq('user_id', userId);
 
     if (competitorsError) {
       throw new Error(`Error fetching competitors: ${competitorsError.message}`);
@@ -93,7 +126,7 @@ Deno.serve(async (req) => {
 
     if (!products || products.length === 0) {
       return new Response(
-        JSON.stringify({ success: true, message: 'No products to reprice', recommendations: [] }),
+        JSON.stringify({ success: true, message: 'No products to reprice', analyzed: 0, recommendations: 0, applied: 0 }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }

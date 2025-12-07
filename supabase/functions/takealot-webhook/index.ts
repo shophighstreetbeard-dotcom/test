@@ -2,7 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.86.0';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-takealot-signature',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-takealot-signature, x-api-key',
 };
 
 interface WebhookPayload {
@@ -14,10 +14,30 @@ interface WebhookPayload {
   buy_box_winner?: boolean;
   buy_box_status?: string;
   timestamp?: string;
+  user_id?: string;
 }
 
-// Fixed user ID for private use
-const PRIVATE_USER_ID = '00000000-0000-0000-0000-000000000001';
+// Rate limiting - simple in-memory store (resets on function restart)
+const requestCounts: Record<string, { count: number; resetTime: number }> = {};
+const RATE_LIMIT = 30; // requests per minute
+const RATE_WINDOW = 60000; // 1 minute in ms
+
+function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const record = requestCounts[ip];
+  
+  if (!record || now > record.resetTime) {
+    requestCounts[ip] = { count: 1, resetTime: now + RATE_WINDOW };
+    return true;
+  }
+  
+  if (record.count >= RATE_LIMIT) {
+    return false;
+  }
+  
+  record.count++;
+  return true;
+}
 
 async function verifySignature(body: string, signature: string | null, secret: string | null): Promise<boolean> {
   if (!secret || !signature) {
@@ -52,6 +72,18 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  // Get client IP for rate limiting
+  const clientIp = req.headers.get('x-forwarded-for')?.split(',')[0] || 'unknown';
+  
+  // Apply rate limiting
+  if (!checkRateLimit(clientIp)) {
+    console.warn(`Rate limit exceeded for IP: ${clientIp}`);
+    return new Response(
+      JSON.stringify({ error: 'Rate limit exceeded. Please try again later.' }),
+      { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -62,9 +94,10 @@ Deno.serve(async (req) => {
     const body = await req.text();
     const signature = req.headers.get('x-takealot-signature');
 
-    console.log('Received webhook:', body.substring(0, 500));
+    console.log('Received webhook from IP:', clientIp);
+    console.log('Webhook body preview:', body.substring(0, 200));
 
-    // Verify signature if secret is configured
+    // Verify signature if secret is configured (required for production)
     if (webhookSecret) {
       const isValid = await verifySignature(body, signature, webhookSecret);
       if (!isValid) {
@@ -74,18 +107,41 @@ Deno.serve(async (req) => {
           { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
+    } else {
+      console.warn('TAKEALOT_WEBHOOK_SECRET not configured - signature verification skipped');
     }
 
     const payload: WebhookPayload = JSON.parse(body);
-    console.log('Parsed webhook payload:', payload);
+    console.log('Parsed webhook payload:', JSON.stringify(payload));
+
+    // Validate required fields
+    if (!payload.event_type) {
+      return new Response(
+        JSON.stringify({ error: 'event_type is required' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // user_id is required for proper data isolation
+    if (!payload.user_id) {
+      console.error('Webhook missing user_id');
+      return new Response(
+        JSON.stringify({ error: 'user_id is required in webhook payload' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     // Store the webhook event
-    await supabase.from('webhook_events').insert({
-      user_id: PRIVATE_USER_ID,
+    const { error: insertError } = await supabase.from('webhook_events').insert({
+      user_id: payload.user_id,
       event_type: payload.event_type || 'unknown',
       payload: payload,
       processed: false,
     });
+
+    if (insertError) {
+      console.error('Error storing webhook event:', insertError);
+    }
 
     // Find the product
     let product = null;
@@ -94,7 +150,7 @@ Deno.serve(async (req) => {
         .from('products')
         .select('*')
         .eq('takealot_offer_id', payload.offer_id)
-        .eq('user_id', PRIVATE_USER_ID)
+        .eq('user_id', payload.user_id)
         .single();
       product = data;
     } else if (payload.sku) {
@@ -102,7 +158,7 @@ Deno.serve(async (req) => {
         .from('products')
         .select('*')
         .eq('sku', payload.sku)
-        .eq('user_id', PRIVATE_USER_ID)
+        .eq('user_id', payload.user_id)
         .single();
       product = data;
     }
@@ -150,10 +206,13 @@ Deno.serve(async (req) => {
     }
 
     // Mark webhook as processed
-    await supabase
-      .from('webhook_events')
-      .update({ processed: true })
-      .eq('payload->offer_id', payload.offer_id);
+    if (payload.offer_id) {
+      await supabase
+        .from('webhook_events')
+        .update({ processed: true })
+        .eq('payload->offer_id', payload.offer_id)
+        .eq('user_id', payload.user_id);
+    }
 
     return new Response(
       JSON.stringify({ success: true, updated: product.sku }),

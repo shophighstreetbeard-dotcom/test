@@ -2,7 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.86.0';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-api-key',
 };
 
 interface PriceUpdate {
@@ -11,12 +11,31 @@ interface PriceUpdate {
   reason?: string;
 }
 
-// Fixed user ID for private use
-const PRIVATE_USER_ID = '00000000-0000-0000-0000-000000000001';
+// Verify API key authentication
+function verifyApiKey(req: Request): boolean {
+  const apiKey = req.headers.get('x-api-key');
+  const expectedKey = Deno.env.get('EDGE_FUNCTION_API_KEY');
+  
+  if (!expectedKey) {
+    console.warn('EDGE_FUNCTION_API_KEY not configured - authentication disabled');
+    return true; // Allow if not configured (for backward compatibility during setup)
+  }
+  
+  return apiKey === expectedKey;
+}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
+  }
+
+  // Verify API key
+  if (!verifyApiKey(req)) {
+    console.error('Unauthorized: Invalid or missing API key');
+    return new Response(
+      JSON.stringify({ error: 'Unauthorized: Invalid or missing API key' }),
+      { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
   }
 
   try {
@@ -30,28 +49,32 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { updates } = await req.json() as { updates: PriceUpdate[] };
+    const { updates, user_id } = await req.json() as { updates: PriceUpdate[]; user_id: string };
+
+    if (!user_id) {
+      throw new Error('user_id is required');
+    }
 
     if (!updates || !Array.isArray(updates)) {
       throw new Error('Invalid request: updates array required');
     }
 
-    console.log(`Processing ${updates.length} price updates`);
+    console.log(`Processing ${updates.length} price updates for user: ${user_id}`);
 
     const results: { product_id: string; success: boolean; error?: string; old_price?: number; new_price?: number }[] = [];
 
     for (const update of updates) {
       try {
-        // Get product details
+        // Get product details - verify ownership
         const { data: product, error: productError } = await supabase
           .from('products')
           .select('*')
           .eq('id', update.product_id)
-          .eq('user_id', PRIVATE_USER_ID)
+          .eq('user_id', user_id)
           .single();
 
         if (productError || !product) {
-          results.push({ product_id: update.product_id, success: false, error: 'Product not found' });
+          results.push({ product_id: update.product_id, success: false, error: 'Product not found or access denied' });
           continue;
         }
 

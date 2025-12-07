@@ -2,7 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.86.0';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-api-key',
 };
 
 interface LeadtimeStock {
@@ -24,18 +24,37 @@ interface TakealotProduct {
   status?: string;
 }
 
-// Fixed user ID for private use
-const PRIVATE_USER_ID = '00000000-0000-0000-0000-000000000001';
-
 // Helper to calculate total stock from leadtime_stock array
 function calculateStock(leadtimeStock: LeadtimeStock[] | undefined): number {
   if (!leadtimeStock || !Array.isArray(leadtimeStock)) return 0;
   return leadtimeStock.reduce((total, item) => total + (item.quantity_available || 0), 0);
 }
 
+// Verify API key authentication
+function verifyApiKey(req: Request): boolean {
+  const apiKey = req.headers.get('x-api-key');
+  const expectedKey = Deno.env.get('EDGE_FUNCTION_API_KEY');
+  
+  if (!expectedKey) {
+    console.warn('EDGE_FUNCTION_API_KEY not configured - authentication disabled');
+    return true; // Allow if not configured (for backward compatibility during setup)
+  }
+  
+  return apiKey === expectedKey;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
+  }
+
+  // Verify API key
+  if (!verifyApiKey(req)) {
+    console.error('Unauthorized: Invalid or missing API key');
+    return new Response(
+      JSON.stringify({ error: 'Unauthorized: Invalid or missing API key' }),
+      { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
   }
 
   try {
@@ -49,8 +68,21 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    console.log('Syncing products for private user');
-    console.log(`Using API key: ${takealotApiKey.substring(0, 20)}...`);
+    // Get the authenticated user from the request body or use service context
+    let userId: string;
+    try {
+      const body = await req.json();
+      userId = body.user_id;
+    } catch {
+      // No body or invalid JSON - this is fine for GET-like operations
+      userId = '';
+    }
+
+    if (!userId) {
+      throw new Error('user_id is required in request body');
+    }
+
+    console.log(`Syncing products for user: ${userId}`);
 
     // Fetch all products with pagination
     let allProducts: TakealotProduct[] = [];
@@ -104,7 +136,7 @@ Deno.serve(async (req) => {
       const { data: existingProducts, error: queryError } = await supabase
         .from('products')
         .select('*')
-        .eq('user_id', PRIVATE_USER_ID)
+        .eq('user_id', userId)
         .or(`sku.eq.${takealotProduct.sku},takealot_offer_id.eq.${offerId}`);
 
       if (queryError) {
@@ -147,7 +179,7 @@ Deno.serve(async (req) => {
         }
       } else {
         const { error: insertError } = await supabase.from('products').insert({
-          user_id: PRIVATE_USER_ID,
+          user_id: userId,
           sku: takealotProduct.sku,
           title: takealotProduct.title,
           current_price: takealotProduct.selling_price,
