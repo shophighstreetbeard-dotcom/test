@@ -1,73 +1,202 @@
-# Welcome to your Lovable project
+# Pricer Pro - Takealot Repricing & Analytics Dashboard
 
-## Project info
+**Automated repricing, competitor tracking, and powerful analytics for Takealot sellers.**
 
-**URL**: https://lovable.dev/projects/e7d3cf5d-aa04-4f03-b378-3901c9a5fa06
+## 🚀 Quick Start
 
-## How can I edit this code?
+### Prerequisites
+- Node.js v18+ 
+- npm or bun
+- Supabase account (free tier supported)
+- Takealot Seller API credentials
+- Git
 
-There are several ways of editing your application.
+### Installation
 
-**Use Lovable**
+```bash
+# Clone the repository
+git clone https://github.com/shophighstreetbeard-dotcom/test.git
+cd test
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/e7d3cf5d-aa04-4f03-b378-3901c9a5fa06) and start prompting.
+# Install dependencies
+npm install
 
-Changes made via Lovable will be committed automatically to this repo.
+# Start development server
+npm run dev
 
-**Use your preferred IDE**
+# Open browser to http://localhost:5173
+```
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+## 🏗️ Architecture
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+### Frontend
+- **React 18** with TypeScript
+- **Vite** for fast development
+- **Tailwind CSS** for styling
+- **shadcn/ui** for components
+- **TanStack React Query** for state management
+- **Supabase JS Client** for real-time data
 
-Follow these steps:
+### Backend
+- **Supabase Edge Functions** (Deno runtime)
+- **PostgreSQL Database**
+- **Real-time webhooks** from Takealot
+- **Automated syncing** with Takealot API
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+### Core Features
+- ✅ Product catalog management with images
+- ✅ Automated price synchronization
+- ✅ Leadtime order tracking & per-warehouse stock
+- ✅ Sales recording & analytics
+- ✅ AI-powered repricing recommendations
+- ✅ Buy box performance tracking
+- ✅ Real-time webhook integration
+- ✅ Price history & audit logs
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+## 📋 Setup Instructions
 
-# Step 3: Install the necessary dependencies.
-npm i
+### 1. Environment Variables
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
+Create `.env.local`:
+```env
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your_anon_key_here
+```
+
+### 2. Supabase Setup
+
+```bash
+# Install Supabase CLI
+npm install -g supabase
+
+# Link to your project
+supabase link --project-ref your-project-ref
+
+# Run migrations (creates all tables)
+supabase migration up
+```
+
+### 3. Deploy Edge Functions
+
+```bash
+# Deploy all functions
+bash scripts/deploy_to_supabase.sh
+```
+
+### 4. Set Secrets
+
+In Supabase Dashboard → Project Settings → Secrets:
+- `TAKEALOT_API_KEY` - Your Takealot API key
+- `TAKEALOT_WEBHOOK_SECRET` - Webhook signature secret
+- `SERVICE_ROLE_KEY` - Supabase service role JWT
+
+### 5. Configure Webhook in Takealot Portal
+
+1. Go to Settings → API Access
+2. Add webhook: `https://your-project.supabase.co/functions/v1/takealot-webhook`
+3. Enable webhook events for: sales, leadtime orders, offers
+
+## 📱 Pages & Features
+
+### Dashboard
+- Key metrics (products, revenue, buy box %, profit)
+- Revenue trends chart
+- Buy box performance
+- Recent activity
+
+### Products
+- **Inventory Tab**: Grid view with images, prices, stock
+- **Sales Tab**: Order history with revenue tracking
+- Sync from Takealot
+- Add/Edit/Delete products
+
+### Analytics
+- Revenue trends
+- Buy box analysis
+- Category breakdown
+- Repricing activity
+
+### Repricing
+- AI recommendations (Gemini)
+- Manual repricing
+- Price history
+
+### Settings
+- Profile management
+- API key configuration
+- Webhook setup instructions
+
+## 🗄️ Database Schema
+
+Key tables:
+- `products` - SKU, price, stock, images
+- `sales` - Order records with quantity/price
+- `price_history` - Price change audit trail
+- `leadtime_orders` - Order item records
+- `webhook_events` - Webhook event log
+
+Per-warehouse stock tracked in `leadtime_stock_details` (JSONB).
+
+## 🔧 Development
+
+```bash
+npm run dev      # Start dev server
+npm run build    # Production build
+npm run preview  # Preview production build
+npm run lint     # Run ESLint
+```
+
+## 🧪 Testing
+
+See [TESTING.md](./TESTING.md) for comprehensive test procedures.
+
+Quick verification:
+```bash
+bash scripts/verify-deployment.sh
+bash scripts/seed-test-data.sh
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+## 🔐 Security
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+- JWT authentication
+- HMAC-SHA256 webhook verification
+- API key validation
+- Rate limiting
+- User data isolation
+- Environment variable protection
 
-**Use GitHub Codespaces**
+## 📚 Documentation
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+- [Complete Testing Guide](./TESTING.md)
+- [Deployment Scripts](./scripts/)
+- [Supabase Documentation](https://supabase.com/docs)
+- [Takealot API Guide](https://sellercenter.takealot.com/api)
 
-## What technologies are used for this project?
+## 🐛 Troubleshooting
 
-This project is built with:
+**Functions not deploying:**
+```bash
+supabase link --project-ref your-ref
+supabase functions deploy --all
+```
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+**Products not syncing:**
+1. Check `TAKEALOT_API_KEY` is set
+2. Review Supabase function logs
+3. Verify user_id in request
 
-## How can I deploy this project?
+**Webhooks not received:**
+1. Verify webhook URL in Takealot portal
+2. Check webhook secret matches
+3. Review function logs
 
-Simply open [Lovable](https://lovable.dev/projects/e7d3cf5d-aa04-4f03-b378-3901c9a5fa06) and click on Share -> Publish.
+## 📄 License
 
-## Can I connect a custom domain to my Lovable project?
+Proprietary - All rights reserved
 
-Yes, you can!
+---
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+**Status:** Production Ready ✅  
+**Last Updated:** December 8, 2025  
+**Version:** 1.0.0
