@@ -203,12 +203,37 @@ Deno.serve(async (req) => {
         }
 
         if (product) {
-          const currentStock = Number(product.stock_quantity || 0);
-          const newStock = Math.max(0, currentStock - Number(orderQty));
-          await supabase
-            .from('products')
-            .update({ stock_quantity: newStock, last_synced_at: new Date().toISOString() })
-            .eq('id', product.id);
+          // Persist leadtime order for audit
+          const { error: insertLeadtimeErr } = await supabase.from('leadtime_orders').insert({
+            user_id: payload.user_id,
+            order_id: (payload as any).order_id,
+            order_item_id: (payload as any).order_item_id,
+            offer_id: offerObj?.offer_id ? String(offerObj.offer_id) : payload.offer_id ? String(payload.offer_id) : null,
+            sku: offerObj?.sku || payload.sku || product.sku,
+            quantity: Number(orderQty),
+            warehouse: (payload as any).warehouse || null,
+            facility: (payload as any).facility || null,
+            payload: payload,
+            created_at: new Date().toISOString(),
+          });
+          if (insertLeadtimeErr) console.error('Failed to insert leadtime_order:', insertLeadtimeErr);
+
+          // Decrement per-warehouse leadtime stock if present in leadtime_stock_details
+          const details = product.leadtime_stock_details || {};
+          const warehouseKey = (payload as any).warehouse || (offerObj && offerObj.leadtime_stock && offerObj.leadtime_stock[0] && offerObj.leadtime_stock[0].merchant_warehouse && offerObj.leadtime_stock[0].merchant_warehouse.name) || null;
+          let newStock = Number(product.stock_quantity || 0) - Number(orderQty);
+          if (warehouseKey && details && typeof details === 'object') {
+            const prevQty = Number((details as any)[warehouseKey] || 0);
+            const updatedQty = Math.max(0, prevQty - Number(orderQty));
+            (details as any)[warehouseKey] = updatedQty;
+            // update aggregate
+            const aggregate = Object.values(details).reduce((s: number, v: any) => s + Number(v || 0), 0);
+            newStock = aggregate;
+            await supabase.from('products').update({ leadtime_stock_details: details, stock_quantity: aggregate, last_synced_at: new Date().toISOString() }).eq('id', product.id);
+          } else {
+            newStock = Math.max(0, Number(product.stock_quantity || 0) - Number(orderQty));
+            await supabase.from('products').update({ stock_quantity: newStock, last_synced_at: new Date().toISOString() }).eq('id', product.id);
+          }
 
           console.log(`Leadtime order processed for ${product.sku}: -${orderQty}, new stock ${newStock}`);
           // mark webhook event processed
