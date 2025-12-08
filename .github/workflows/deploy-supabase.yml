@@ -10,29 +10,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Supabase CLI
+      - name: Set up environment
         run: |
-          mkdir -p supabase-cli
-          cd supabase-cli
-          curl -fsSL https://github.com/supabase/cli/releases/download/v2.65.5/supabase_linux_amd64.tar.gz -o supabase.tar.gz
-          tar -xzf supabase.tar.gz
-          sudo mv supabase /usr/local/bin/
-          cd ..
-          /usr/local/bin/supabase version
+          # Install required tools
+          curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - || true
+          sudo apt-get update
+          sudo apt-get install -y nodejs
+          which node
+          node --version
 
-      - name: Deploy functions
+      - name: Install and deploy with Supabase
         run: |
-          supabase functions deploy takealot-webhook --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
-          supabase functions deploy sync-takealot-products --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
-          supabase functions deploy update-takealot-prices --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
-          supabase functions deploy ai-repricer --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
+          # Use npx to run supabase CLI without global installation
+          npx --yes @supabase/cli@latest functions deploy takealot-webhook --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
+          npx --yes @supabase/cli@latest functions deploy sync-takealot-products --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
+          npx --yes @supabase/cli@latest functions deploy update-takealot-prices --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
+          npx --yes @supabase/cli@latest functions deploy ai-repricer --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
 
       - name: Set Supabase secrets
         run: |
-          supabase secrets set TAKEALOT_API_KEY=${{ secrets.TAKEALOT_API_KEY }} --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
-          supabase secrets set TAKEALOT_WEBHOOK_SECRET=${{ secrets.TAKEALOT_WEBHOOK_SECRET }} --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
-          supabase secrets set SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }} --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
+          npx --yes @supabase/cli@latest secrets set TAKEALOT_API_KEY=${{ secrets.TAKEALOT_API_KEY }} --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
+          npx --yes @supabase/cli@latest secrets set TAKEALOT_WEBHOOK_SECRET=${{ secrets.TAKEALOT_WEBHOOK_SECRET }} --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
+          npx --yes @supabase/cli@latest secrets set SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }} --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
