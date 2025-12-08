@@ -5,6 +5,32 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-api-key',
 };
 
+// Helper: fetch with retries and exponential backoff for transient errors
+async function fetchWithRetries(input: RequestInfo, init?: RequestInit, retries = 3, backoffMs = 500) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(input, init);
+      if (res.ok) return res;
+      if ([429, 502, 503, 504].includes(res.status) && attempt < retries) {
+        const wait = backoffMs * Math.pow(2, attempt);
+        console.warn(`Transient error ${res.status} from ${input}; retrying in ${wait}ms (attempt ${attempt + 1})`);
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
+      return res;
+    } catch (err) {
+      if (attempt < retries) {
+        const wait = backoffMs * Math.pow(2, attempt);
+        console.warn(`Network error when fetching ${input}: ${err}. Retrying in ${wait}ms (attempt ${attempt + 1})`);
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('Exceeded fetch retries');
+}
+
 interface Product {
   id: string;
   sku: string;
@@ -264,7 +290,7 @@ Only include products that need price changes. Return empty array if no changes 
       // Update price on Takealot if available
       if (product.takealot_offer_id && takealotApiKey) {
         try {
-          const takealotResponse = await fetch(
+          const takealotResponse = await fetchWithRetries(
             `https://seller-api.takealot.com/v2/offers/offer/${product.takealot_offer_id}`,
             {
               method: 'PATCH',
@@ -273,11 +299,13 @@ Only include products that need price changes. Return empty array if no changes 
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({ selling_price: finalPrice }),
-            }
+            },
+            3,
+            700
           );
 
           if (!takealotResponse.ok) {
-            console.error(`Failed to update Takealot price for ${product.sku}`);
+            console.error(`Failed to update Takealot price for ${product.sku}: ${takealotResponse.status}`);
           } else {
             console.log(`Updated Takealot price for ${product.sku} to ${finalPrice}`);
           }

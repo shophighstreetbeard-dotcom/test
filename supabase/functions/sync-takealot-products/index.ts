@@ -30,6 +30,33 @@ function calculateStock(leadtimeStock: LeadtimeStock[] | undefined): number {
   return leadtimeStock.reduce((total, item) => total + (item.quantity_available || 0), 0);
 }
 
+// Helper: fetch with retries and exponential backoff for transient errors
+async function fetchWithRetries(input: RequestInfo, init?: RequestInit, retries = 3, backoffMs = 500) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(input, init);
+      if (res.ok) return res;
+      // Retry on transient server errors or rate limiting
+      if ([429, 502, 503, 504].includes(res.status) && attempt < retries) {
+        const wait = backoffMs * Math.pow(2, attempt);
+        console.warn(`Transient error ${res.status} from ${input}; retrying in ${wait}ms (attempt ${attempt + 1})`);
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
+      return res;
+    } catch (err) {
+      if (attempt < retries) {
+        const wait = backoffMs * Math.pow(2, attempt);
+        console.warn(`Network error when fetching ${input}: ${err}. Retrying in ${wait}ms (attempt ${attempt + 1})`);
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('Exceeded fetch retries');
+}
+
 // Verify API key authentication
 function verifyApiKey(req: Request): boolean {
   const apiKey = req.headers.get('x-api-key');
@@ -92,12 +119,12 @@ Deno.serve(async (req) => {
     let hasMore = true;
 
     while (hasMore) {
-      const takealotResponse = await fetch(`https://seller-api.takealot.com/v2/offers?page_number=${page}&page_size=100`, {
+      const takealotResponse = await fetchWithRetries(`https://seller-api.takealot.com/v2/offers?page_number=${page}&page_size=100`, {
         headers: {
           'Authorization': `Key ${takealotApiKey}`,
           'Content-Type': 'application/json',
         },
-      });
+      }, 3, 700);
 
       console.log(`Takealot API page ${page} response status: ${takealotResponse.status}`);
 

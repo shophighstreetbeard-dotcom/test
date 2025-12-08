@@ -5,6 +5,32 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-api-key',
 };
 
+// Helper: fetch with retries and exponential backoff for transient errors
+async function fetchWithRetries(input: RequestInfo, init?: RequestInit, retries = 3, backoffMs = 500) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(input, init);
+      if (res.ok) return res;
+      if ([429, 502, 503, 504].includes(res.status) && attempt < retries) {
+        const wait = backoffMs * Math.pow(2, attempt);
+        console.warn(`Transient error ${res.status} from ${input}; retrying in ${wait}ms (attempt ${attempt + 1})`);
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
+      return res;
+    } catch (err) {
+      if (attempt < retries) {
+        const wait = backoffMs * Math.pow(2, attempt);
+        console.warn(`Network error when fetching ${input}: ${err}. Retrying in ${wait}ms (attempt ${attempt + 1})`);
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('Exceeded fetch retries');
+}
+
 interface PriceUpdate {
   product_id: string;
   new_price: number;
@@ -83,7 +109,7 @@ Deno.serve(async (req) => {
         if (product.takealot_offer_id) {
           console.log(`Updating Takealot price for offer ${product.takealot_offer_id} to ${update.new_price}`);
           
-          const takealotResponse = await fetch(
+          const takealotResponse = await fetchWithRetries(
             `https://seller-api.takealot.com/v2/offers/offer/${product.takealot_offer_id}`,
             {
               method: 'PATCH',
@@ -94,7 +120,9 @@ Deno.serve(async (req) => {
               body: JSON.stringify({
                 selling_price: update.new_price,
               }),
-            }
+            },
+            3,
+            700
           );
 
           if (!takealotResponse.ok) {
