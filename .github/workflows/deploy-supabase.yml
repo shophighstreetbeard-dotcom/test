@@ -12,10 +12,13 @@ jobs:
 
       - name: Install Supabase CLI
         run: |
+          mkdir -p supabase-cli
+          cd supabase-cli
           curl -fsSL https://github.com/supabase/cli/releases/download/v2.65.5/supabase_linux_amd64.tar.gz -o supabase.tar.gz
           tar -xzf supabase.tar.gz
           sudo mv supabase /usr/local/bin/
-          supabase version
+          cd ..
+          /usr/local/bin/supabase version
 
       - name: Deploy functions
         run: |
