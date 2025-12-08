@@ -173,6 +173,67 @@ Deno.serve(async (req) => {
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+    // Special handling: leadtime order item notifications
+    // If the webhook contains an order_item_id or an offer object, treat it as a leadtime order
+    if ((payload as any).order_item_id || (payload as any).offer) {
+      try {
+        const orderQty = (payload as any).quantity || 1;
+        // If offer object provided, prefer its offer_id/sku
+        const offerObj = (payload as any).offer;
+        if (offerObj && !product) {
+          // try find by offer object
+          if (offerObj.offer_id) {
+            const { data } = await supabase
+              .from('products')
+              .select('*')
+              .eq('takealot_offer_id', String(offerObj.offer_id))
+              .eq('user_id', payload.user_id)
+              .single();
+            product = data;
+          }
+          if (!product && offerObj.sku) {
+            const { data } = await supabase
+              .from('products')
+              .select('*')
+              .eq('sku', offerObj.sku)
+              .eq('user_id', payload.user_id)
+              .single();
+            product = data;
+          }
+        }
+
+        if (product) {
+          const currentStock = Number(product.stock_quantity || 0);
+          const newStock = Math.max(0, currentStock - Number(orderQty));
+          await supabase
+            .from('products')
+            .update({ stock_quantity: newStock, last_synced_at: new Date().toISOString() })
+            .eq('id', product.id);
+
+          console.log(`Leadtime order processed for ${product.sku}: -${orderQty}, new stock ${newStock}`);
+          // mark webhook event processed
+          await supabase
+            .from('webhook_events')
+            .update({ processed: true })
+            .eq('payload->order_item_id', (payload as any).order_item_id)
+            .eq('user_id', payload.user_id);
+
+          return new Response(
+            JSON.stringify({ success: true, message: 'Leadtime order applied', sku: product.sku, new_stock: newStock }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        } else {
+          console.log('Leadtime order received but product not found; event logged');
+          return new Response(
+            JSON.stringify({ success: true, message: 'Product not found, leadtime order logged' }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+      } catch (err) {
+        console.error('Error processing leadtime order webhook:', err);
+        return new Response(JSON.stringify({ error: 'Failed to process leadtime order' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+    }
 
     // Update product based on webhook data
     const updates: Record<string, any> = {
