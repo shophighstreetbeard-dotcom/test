@@ -21,10 +21,11 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Search, Edit, Trash2, Package, RefreshCw } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Package, RefreshCw, Image as ImageIcon, ShoppingCart } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 // Fixed user ID for private use
 const PRIVATE_USER_ID = '00000000-0000-0000-0000-000000000001';
@@ -140,8 +141,28 @@ export default function Products() {
     }
   };
 
+  const { data: sales } = useQuery({
+    queryKey: ['sales'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('sales')
+        .select('*')
+        .eq('user_id', PRIVATE_USER_ID)
+        .order('sold_at', { ascending: false });
+      if (error) throw error;
+      return data;
+    },
+  });
+
   return (
     <DashboardLayout title="Products" subtitle="Manage your Takealot product listings">
+      <Tabs defaultValue="products" className="w-full">
+        <TabsList className="grid w-full max-w-md grid-cols-2">
+          <TabsTrigger value="products">Inventory</TabsTrigger>
+          <TabsTrigger value="sales">Sales</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="products">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="font-display">Product Inventory</CardTitle>
@@ -269,55 +290,116 @@ export default function Products() {
               <p className="text-muted-foreground mb-4">Click "Sync from Takealot" to import your products</p>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>SKU</TableHead>
-                  <TableHead>Title</TableHead>
-                  <TableHead>Current Price</TableHead>
-                  <TableHead>Min/Max</TableHead>
-                  <TableHead>Stock</TableHead>
-                  <TableHead>Buy Box</TableHead>
-                  <TableHead>Competitors</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredProducts?.map((product) => (
-                  <TableRow key={product.id}>
-                    <TableCell className="font-mono text-sm">{product.sku}</TableCell>
-                    <TableCell className="max-w-xs truncate">{product.title}</TableCell>
-                    <TableCell className="font-semibold">R {Number(product.current_price).toFixed(2)}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {product.min_price && product.max_price 
-                        ? `R ${Number(product.min_price).toFixed(0)} - R ${Number(product.max_price).toFixed(0)}`
-                        : '-'
-                      }
-                    </TableCell>
-                    <TableCell>{product.stock_quantity}</TableCell>
-                    <TableCell>{getBuyBoxBadge(product.buy_box_status || 'unknown')}</TableCell>
-                    <TableCell>{product.competitor_count}</TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <Button variant="ghost" size="icon">
-                          <Edit className="w-4 h-4" />
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              {filteredProducts?.map((product) => (
+                <Card key={product.id} className="overflow-hidden hover:shadow-lg transition-shadow">
+                  <div className="aspect-square bg-muted flex items-center justify-center relative overflow-hidden">
+                    {product.image_url ? (
+                      <img 
+                        src={product.image_url} 
+                        alt={product.title}
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          e.currentTarget.src = '';
+                          e.currentTarget.parentElement!.classList.add('bg-muted');
+                        }}
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center gap-2">
+                        <ImageIcon className="w-8 h-8 text-muted-foreground" />
+                        <span className="text-xs text-muted-foreground">No image</span>
+                      </div>
+                    )}
+                  </div>
+                  <CardContent className="p-4">
+                    <div className="space-y-3">
+                      <div>
+                        <p className="text-xs text-muted-foreground font-mono">{product.sku}</p>
+                        <h3 className="font-semibold line-clamp-2 text-sm">{product.title}</h3>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-lg font-bold text-accent">R {Number(product.current_price).toFixed(2)}</p>
+                          <p className="text-xs text-muted-foreground">Stock: {product.stock_quantity}</p>
+                        </div>
+                        {getBuyBoxBadge(product.buy_box_status || 'unknown')}
+                      </div>
+                      <div className="flex gap-2">
+                        <Button variant="ghost" size="sm" className="flex-1">
+                          <Edit className="w-4 h-4 mr-1" />
+                          Edit
                         </Button>
                         <Button 
                           variant="ghost" 
-                          size="icon"
+                          size="sm" 
+                          className="flex-1 text-destructive"
                           onClick={() => deleteProduct.mutate(product.id)}
                         >
-                          <Trash2 className="w-4 h-4 text-destructive" />
+                          <Trash2 className="w-4 h-4" />
                         </Button>
                       </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
           )}
         </CardContent>
       </Card>
+        </TabsContent>
+
+        <TabsContent value="sales">
+          <Card>
+            <CardHeader>
+              <CardTitle className="font-display">Sales History</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {!sales || sales.length === 0 ? (
+                <div className="text-center py-12">
+                  <ShoppingCart className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                  <h3 className="font-semibold text-lg mb-2">No sales yet</h3>
+                  <p className="text-muted-foreground">Sales will appear here as orders are received</p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Order ID</TableHead>
+                      <TableHead>Product</TableHead>
+                      <TableHead>SKU</TableHead>
+                      <TableHead>Quantity</TableHead>
+                      <TableHead>Sale Price</TableHead>
+                      <TableHead>Total</TableHead>
+                      <TableHead>Date</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {sales.map((sale: any) => {
+                      const saleTotal = (Number(sale.sale_price) || 0) * (sale.quantity || 1);
+                      const saleDate = new Date(sale.sold_at).toLocaleDateString('en-ZA', { 
+                        month: 'short', 
+                        day: 'numeric',
+                        year: 'numeric'
+                      });
+                      return (
+                        <TableRow key={sale.id}>
+                          <TableCell className="font-mono text-sm">{sale.order_id}</TableCell>
+                          <TableCell className="max-w-xs truncate text-sm">{sale.product?.title || 'Unknown'}</TableCell>
+                          <TableCell className="font-mono text-sm">{sale.product?.sku || 'N/A'}</TableCell>
+                          <TableCell>{sale.quantity}</TableCell>
+                          <TableCell>R {Number(sale.sale_price).toFixed(2)}</TableCell>
+                          <TableCell className="font-semibold">R {saleTotal.toFixed(2)}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground">{saleDate}</TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </DashboardLayout>
   );
 }
