@@ -33,6 +33,9 @@ jobs:
         run: |
           npx --yes supabase@latest secrets set TAKEALOT_API_KEY=${{ secrets.TAKEALOT_API_KEY }} --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
           npx --yes supabase@latest secrets set TAKEALOT_WEBHOOK_SECRET=${{ secrets.TAKEALOT_WEBHOOK_SECRET }} --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
-          npx --yes supabase@latest secrets set SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }} --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
+          # supabase CLI rejects env names that start with "SUPABASE_", so map the GitHub secret
+          # value (which may be stored under the repo secret name SUPABASE_SERVICE_ROLE_KEY)
+          # into a non-prefixed secret name `SERVICE_ROLE_KEY` in Supabase.
+          npx --yes supabase@latest secrets set SERVICE_ROLE_KEY="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}

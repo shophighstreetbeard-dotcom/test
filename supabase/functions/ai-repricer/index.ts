@@ -65,7 +65,8 @@ Deno.serve(async (req) => {
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || Deno.env.get('SERVICE_ROLE_KEY');
+    if (!supabaseServiceKey) throw new Error('Service role key not configured (SUPABASE_SERVICE_ROLE_KEY or SERVICE_ROLE_KEY)');
     const geminiApiKey = Deno.env.get('GEMINI_API_KEY');
 
     if (!geminiApiKey) {

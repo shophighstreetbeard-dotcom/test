@@ -86,7 +86,10 @@ Deno.serve(async (req) => {
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    // The Supabase CLI refuses to set env names that start with "SUPABASE_". Accept both
+    // the legacy `SUPABASE_SERVICE_ROLE_KEY` and the non-prefixed `SERVICE_ROLE_KEY`.
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || Deno.env.get('SERVICE_ROLE_KEY');
+    if (!supabaseServiceKey) throw new Error('Service role key not configured (SUPABASE_SERVICE_ROLE_KEY or SERVICE_ROLE_KEY)');
     const webhookSecret = Deno.env.get('TAKEALOT_WEBHOOK_SECRET');
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
