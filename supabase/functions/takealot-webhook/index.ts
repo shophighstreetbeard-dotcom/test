@@ -235,6 +235,120 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Special handling: sale / sale status changed notifications
+    if ((payload as any).sale) {
+      try {
+        const sale = (payload as any).sale;
+        const orderQty = Number(sale.quantity || 1);
+
+        // Try to find product by offer_id or sku
+        let saleProduct = product;
+        if (!saleProduct) {
+          if (sale.offer_id) {
+            const { data } = await supabase
+              .from('products')
+              .select('*')
+              .eq('takealot_offer_id', String(sale.offer_id))
+              .eq('user_id', payload.user_id)
+              .single();
+            saleProduct = data;
+          }
+          if (!saleProduct && sale.sku) {
+            const { data } = await supabase
+              .from('products')
+              .select('*')
+              .eq('sku', sale.sku)
+              .eq('user_id', payload.user_id)
+              .single();
+            saleProduct = data;
+          }
+        }
+
+        // Persist sale record and update stock
+        if (saleProduct) {
+          const soldAt = sale.order_date || (payload as any).event_timestamp_utc || new Date().toISOString();
+          const salePrice = Number(sale.selling_price || 0);
+
+          // Insert into sales table
+          const { error: salesError } = await supabase.from('sales').insert({
+            user_id: payload.user_id,
+            product_id: saleProduct.id,
+            order_id: String(sale.order_id || ''),
+            quantity: orderQty,
+            sale_price: salePrice,
+            sold_at: soldAt,
+            created_at: new Date().toISOString(),
+          });
+          if (salesError) console.error('Failed to insert sale record:', salesError);
+
+          // Decrement stock_quantity (aggregate) -- keep >=0
+          const currentStock = Number(saleProduct.stock_quantity || 0);
+          const newStock = Math.max(0, currentStock - orderQty);
+          await supabase.from('products').update({ stock_quantity: newStock, last_synced_at: new Date().toISOString() }).eq('id', saleProduct.id);
+
+          console.log(`Processed sale for ${saleProduct.sku}: qty ${orderQty}, new stock ${newStock}`);
+
+          // Mark webhook event processed
+          await supabase
+            .from('webhook_events')
+            .update({ processed: true })
+            .eq('payload->sale->order_item_id', sale.order_item_id)
+            .eq('user_id', payload.user_id);
+
+          return new Response(JSON.stringify({ success: true, message: 'Sale processed', sku: saleProduct.sku, new_stock: newStock }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        } else {
+          console.log('Sale webhook received but product not found; event logged');
+          return new Response(JSON.stringify({ success: true, message: 'Product not found, sale logged' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+      } catch (err) {
+        console.error('Error processing sale webhook:', err);
+        return new Response(JSON.stringify({ error: 'Failed to process sale' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+    }
+
+    // Special handling: offer created/updated notifications
+    if (payload.event_type && (payload.event_type === 'offer.created' || payload.event_type === 'offer.updated' || payload.event_type === 'offer.update')) {
+      try {
+        // If Takealot sends 'values_changed' or an offer object, attempt to upsert product
+        const offerObj = (payload as any).offer || {};
+        const offerId = payload.offer_id || offerObj.offer_id || (payload as any).offerId;
+        const sku = payload.sku || offerObj.sku || (payload as any).merchant_sku;
+        const sellingPrice = (payload as any).price || offerObj.selling_price || (payload as any).selling_price;
+        const imageUrl = (payload as any).image_url || offerObj.image_url || null;
+
+        if (!sku && !offerId) {
+          console.log('Offer webhook missing identifiers; skipping product upsert');
+        } else {
+          // Upsert product by sku if present, otherwise by offer id
+          const existingQuery = sku
+            ? supabase.from('products').select('*').eq('sku', sku).eq('user_id', payload.user_id).maybeSingle()
+            : supabase.from('products').select('*').eq('takealot_offer_id', String(offerId)).eq('user_id', payload.user_id).maybeSingle();
+          const { data: existing } = await existingQuery;
+
+          const upsertData: any = {
+            sku: sku || existing?.sku || null,
+            takealot_offer_id: offerId ? String(offerId) : existing?.takealot_offer_id || null,
+            title: (payload as any).title || offerObj.title || existing?.title || '',
+            current_price: sellingPrice !== undefined ? Number(sellingPrice) : existing?.current_price || 0,
+            image_url: imageUrl || existing?.image_url || null,
+            last_synced_at: new Date().toISOString(),
+            user_id: payload.user_id,
+          };
+
+          if (existing) {
+            await supabase.from('products').update(upsertData).eq('id', existing.id);
+            console.log(`Updated product from offer webhook: ${existing.sku || upsertData.sku}`);
+          } else {
+            await supabase.from('products').insert(upsertData);
+            console.log(`Inserted new product from offer webhook: ${upsertData.sku}`);
+          }
+        }
+      } catch (err) {
+        console.error('Error processing offer webhook:', err);
+      }
+      return new Response(JSON.stringify({ success: true, message: 'Offer webhook handled' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     // Update product based on webhook data
     const updates: Record<string, any> = {
       last_synced_at: new Date().toISOString(),
