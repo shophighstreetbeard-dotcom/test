@@ -12,11 +12,34 @@ import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
 import Auth from "./pages/Auth";
 import ProtectedRoute from "./components/ProtectedRoute";
-import { AuthProvider } from "./contexts/AuthContext";
+import { useAuth } from "./contexts/AuthContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { SearchProvider } from "./contexts/SearchContext";
 
 const queryClient = new QueryClient();
+
+const AppContent = () => {
+  const { loading } = useAuth();
+
+  if (loading) {
+    return <div>Loading...</div>; // Or a spinner component
+  }
+
+  return (
+    <Routes>
+      <Route path="/auth" element={<Auth />} />
+      <Route element={<ProtectedRoute />}>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/products" element={<Products />} />
+        <Route path="/repricing" element={<Repricing />} />
+        <Route path="/competitors" element={<Competitors />} />
+        <Route path="/analytics" element={<Analytics />} />
+        <Route path="/settings" element={<Settings />} />
+      </Route>
+      <Route path="*" element={<NotFound />} />
+    </Routes>
+  );
+};
 
 const App = () => (
   <ThemeProvider defaultTheme="system" storageKey="vite-ui-theme">
@@ -26,20 +49,7 @@ const App = () => (
         <Sonner />
         <BrowserRouter>
           <SearchProvider>
-            <AuthProvider>
-              <Routes>
-                <Route path="/auth" element={<Auth />} />
-                <Route element={<ProtectedRoute />}>
-                  <Route path="/" element={<Dashboard />} />
-                  <Route path="/products" element={<Products />} />
-                  <Route path="/repricing" element={<Repricing />} />
-                  <Route path="/competitors" element={<Competitors />} />
-                  <Route path="/analytics" element={<Analytics />} />
-                  <Route path="/settings" element={<Settings />} />
-                </Route>
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </AuthProvider>
+            <AppContent />
           </SearchProvider>
         </BrowserRouter>
       </TooltipProvider>
