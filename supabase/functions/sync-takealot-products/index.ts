@@ -113,42 +113,25 @@ Deno.serve(async (req) => {
 
     console.log(`Syncing products for user: ${userId}`);
 
-    // Fetch all products with pagination
-    let allProducts: TakealotProduct[] = [];
-    let page = 1;
-    let hasMore = true;
-
-    while (hasMore) {
-      const takealotResponse = await fetchWithRetries(`https://seller-api.takealot.com/v2/offers?page_number=${page}&page_size=100`, {
+    // Fetch the first page of products to avoid function timeout
+    console.log('Fetching first page of products from Takealot (page_size=100)');
+    const takealotResponse = await fetchWithRetries(`https://seller-api.takealot.com/v2/offers?page_number=1&page_size=100`, {
         headers: {
           'Authorization': `Key ${takealotApiKey}`,
           'Content-Type': 'application/json',
         },
       }, 3, 700);
 
-      console.log(`Takealot API page ${page} response status: ${takealotResponse.status}`);
+    console.log(`Takealot API page 1 response status: ${takealotResponse.status}`);
 
-      if (!takealotResponse.ok) {
-        const errorText = await takealotResponse.text();
-        console.error('Takealot API error response:', errorText);
-        throw new Error(`Takealot API error: ${takealotResponse.status} - ${errorText.substring(0, 200)}`);
-      }
-
-      const takealotData = await takealotResponse.json();
-      
-      if (page === 1) {
-        console.log('Total results:', takealotData.total_results);
-      }
-      
-      const products: TakealotProduct[] = takealotData.offers || [];
-      allProducts = [...allProducts, ...products];
-      
-      hasMore = products.length === 100 && allProducts.length < takealotData.total_results;
-      page++;
-      
-      // Safety limit
-      if (page > 100) break;
+    if (!takealotResponse.ok) {
+      const errorText = await takealotResponse.text();
+      console.error('Takealot API error response:', errorText);
+      throw new Error(`Takealot API error: ${takealotResponse.status} - ${errorText.substring(0, 200)}`);
     }
+
+    const takealotData = await takealotResponse.json();
+    const allProducts: TakealotProduct[] = takealotData.offers || [];
 
     console.log(`Fetched ${allProducts.length} products from Takealot`);
 
