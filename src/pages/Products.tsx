@@ -30,6 +30,31 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 // Fixed user ID for private use
 const PRIVATE_USER_ID = '00000000-0000-0000-0000-000000000001';
 
+interface Product {
+  id: string;
+  sku: string;
+  title: string;
+  current_price: number;
+  min_price: number | null;
+  max_price: number | null;
+  cost_price: number | null;
+  stock_quantity: number;
+  buy_box_status: string | null;
+  image_url: string | null;
+}
+
+interface Sale {
+  id: string;
+  order_id: string | null;
+  quantity: number;
+  sale_price: number;
+  sold_at: string;
+  product: {
+    title: string | null;
+    sku: string | null;
+  } | null;
+}
+
 const productSchema = z.object({
   sku: z.string().min(1, 'SKU is required').max(100, 'SKU too long'),
   title: z.string().min(1, 'Title is required').max(500, 'Title too long'),
@@ -54,7 +79,7 @@ export default function Products() {
     stock_quantity: '',
   });
 
-  const { data: products, isLoading } = useQuery({
+  const { data: products, isLoading } = useQuery<Product[]>({ // Specify type here
     queryKey: ['products'],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -63,7 +88,7 @@ export default function Products() {
         .eq('user_id', PRIVATE_USER_ID)
         .order('created_at', { ascending: false });
       if (error) throw error;
-      return data;
+      return data as Product[]; // Cast data here
     },
   });
 
@@ -88,7 +113,7 @@ export default function Products() {
       setIsOpen(false);
       setFormData({ sku: '', title: '', current_price: '', min_price: '', max_price: '', cost_price: '', stock_quantity: '' });
     },
-    onError: (error: any) => {
+    onError: (error) => {
       toast.error(error instanceof z.ZodError ? error.errors[0].message : error.message);
     },
   });
@@ -109,7 +134,7 @@ export default function Products() {
       queryClient.invalidateQueries({ queryKey: ['products'] });
       toast.success(`Synced ${data.synced} products (${data.created} new, ${data.updated} updated)`);
     },
-    onError: (error: any) => {
+    onError: (error) => {
       toast.error(error.message);
     },
   });
@@ -141,16 +166,19 @@ export default function Products() {
     }
   };
 
-  const { data: sales } = useQuery({
+  const { data: sales } = useQuery<Sale[]>({ // Specify type here
     queryKey: ['sales'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('sales')
-        .select('*')
+        .select(`
+          *,
+          product:products(title, sku)
+        `)
         .eq('user_id', PRIVATE_USER_ID)
         .order('sold_at', { ascending: false });
       if (error) throw error;
-      return data;
+      return data as Sale[]; // Cast data here
     },
   });
 
@@ -287,11 +315,11 @@ export default function Products() {
             <div className="text-center py-12">
               <Package className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
               <h3 className="font-semibold text-lg mb-2">No products yet</h3>
-              <p className="text-muted-foreground mb-4">Click "Sync from Takealot" to import your products</p>
+              <p className="text-muted-foreground mb-4">Click \"Sync from Takealot\" to import your products</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {filteredProducts?.map((product) => (
+              {filteredProducts?.map((product: Product) => (
                 <Card key={product.id} className="overflow-hidden hover:shadow-lg transition-shadow">
                   <div className="aspect-square bg-muted flex items-center justify-center relative overflow-hidden">
                     {product.image_url ? (
@@ -374,7 +402,7 @@ export default function Products() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {sales.map((sale: any) => {
+                    {sales.map((sale: Sale) => {
                       const saleTotal = (Number(sale.sale_price) || 0) * (sale.quantity || 1);
                       const saleDate = new Date(sale.sold_at).toLocaleDateString('en-ZA', { 
                         month: 'short', 

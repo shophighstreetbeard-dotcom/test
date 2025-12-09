@@ -28,6 +28,19 @@ import { toast } from 'sonner';
 // Fixed user ID for private use
 const PRIVATE_USER_ID = '00000000-0000-0000-0000-000000000001';
 
+interface RepricingRule {
+  id: string;
+  name: string;
+  rule_type: 'beat_lowest' | 'match_buy_box' | 'beat_buy_box';
+  price_adjustment: number;
+  adjustment_type: 'fixed' | 'percentage';
+  min_margin: number | null;
+  is_active: boolean;
+  priority: number;
+  created_at: string;
+  updated_at: string;
+}
+
 const ruleSchema = z.object({
   name: z.string().min(1, 'Name is required').max(100, 'Name too long'),
   rule_type: z.enum(['beat_lowest', 'match_buy_box', 'beat_buy_box']),
@@ -53,7 +66,7 @@ export default function Repricing() {
     min_margin: '',
   });
 
-  const { data: rules, isLoading } = useQuery({
+  const { data: rules, isLoading } = useQuery<RepricingRule[]>({ // Specify type here
     queryKey: ['repricing-rules'],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -62,7 +75,7 @@ export default function Repricing() {
         .eq('user_id', PRIVATE_USER_ID)
         .order('priority', { ascending: true });
       if (error) throw error;
-      return data;
+      return data as RepricingRule[]; // Cast data here
     },
   });
 
@@ -85,7 +98,7 @@ export default function Repricing() {
       setIsOpen(false);
       setFormData({ name: '', rule_type: 'beat_lowest', price_adjustment: '0.01', adjustment_type: 'fixed', min_margin: '' });
     },
-    onError: (error: any) => {
+    onError: (error: Error) => {
       toast.error(error instanceof z.ZodError ? error.errors[0].message : error.message);
     },
   });
@@ -130,7 +143,7 @@ export default function Repricing() {
       queryClient.invalidateQueries({ queryKey: ['products'] });
       toast.success(`AI Repricer: Analyzed ${data.analyzed} products, applied ${data.applied} price changes`);
     },
-    onError: (error: any) => {
+    onError: (error: Error) => {
       toast.error(error.message);
     },
   });
@@ -219,7 +232,7 @@ export default function Repricing() {
                   <Label htmlFor="rule_type">Rule Type</Label>
                   <Select
                     value={formData.rule_type}
-                    onValueChange={(value) => setFormData({ ...formData, rule_type: value })}
+                    onValueChange={(value) => setFormData({ ...formData, rule_type: value as typeof formData.rule_type })}
                   >
                     <SelectTrigger>
                       <SelectValue />
@@ -248,7 +261,7 @@ export default function Repricing() {
                     <Label htmlFor="adjustment_type">Adjustment Type</Label>
                     <Select
                       value={formData.adjustment_type}
-                      onValueChange={(value) => setFormData({ ...formData, adjustment_type: value })}
+                      onValueChange={(value) => setFormData({ ...formData, adjustment_type: value as typeof formData.adjustment_type })}
                     >
                       <SelectTrigger>
                         <SelectValue />
@@ -292,7 +305,7 @@ export default function Repricing() {
             </div>
           ) : (
             <div className="space-y-4">
-              {rules?.map((rule) => {
+              {rules?.map((rule: RepricingRule) => {
                 const Icon = getRuleIcon(rule.rule_type);
                 return (
                   <div

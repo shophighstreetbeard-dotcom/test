@@ -13,29 +13,42 @@ import {
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
+import { useAuth } from '@/contexts/AuthContext';
 
-// Fixed user ID for private use
-const PRIVATE_USER_ID = '00000000-0000-0000-0000-000000000001';
+interface PriceHistoryItem {
+  id: string;
+  created_at: string;
+  reason: string;
+  old_price: number;
+  new_price: number;
+  products: {
+    sku: string;
+    title: string;
+  } | null;
+}
 
 export default function Dashboard() {
+  const { user } = useAuth();
+
   const { data: products } = useQuery({
-    queryKey: ['products-count'],
+    queryKey: ['products-count', user?.id],
     queryFn: async () => {
       const { count } = await supabase
         .from('products')
         .select('*', { count: 'exact', head: true })
-        .eq('user_id', PRIVATE_USER_ID);
+        .eq('user_id', user!.id);
       return count || 0;
     },
+    enabled: !!user,
   });
 
   const { data: buyBoxStats } = useQuery({
-    queryKey: ['buybox-stats'],
+    queryKey: ['buybox-stats', user?.id],
     queryFn: async () => {
       const { data } = await supabase
         .from('products')
         .select('buy_box_status')
-        .eq('user_id', PRIVATE_USER_ID);
+        .eq('user_id', user!.id);
       
       const won = data?.filter(p => p.buy_box_status === 'won').length || 0;
       const lost = data?.filter(p => p.buy_box_status === 'lost').length || 0;
@@ -45,15 +58,16 @@ export default function Dashboard() {
       
       return { won, lost, unknown, winRate };
     },
+    enabled: !!user,
   });
 
   const { data: salesData } = useQuery({
-    queryKey: ['sales-summary'],
+    queryKey: ['sales-summary', user?.id],
     queryFn: async () => {
       const { data } = await supabase
         .from('sales')
         .select('sale_price, profit, quantity')
-        .eq('user_id', PRIVATE_USER_ID);
+        .eq('user_id', user!.id);
       
       const totalRevenue = data?.reduce((sum, s) => sum + Number(s.sale_price) * s.quantity, 0) || 0;
       const totalProfit = data?.reduce((sum, s) => sum + (Number(s.profit) || 0), 0) || 0;
@@ -61,32 +75,63 @@ export default function Dashboard() {
       
       return { totalRevenue, totalProfit, totalOrders };
     },
+    enabled: !!user,
   });
 
-  const { data: priceHistory } = useQuery({
-    queryKey: ['price-history-recent'],
+  const { data: priceHistory } = useQuery<PriceHistoryItem[]>({ // Define the type here
+    queryKey: ['price-history-recent', user?.id],
     queryFn: async () => {
-      const { data } = await supabase
+      if (!user) return [];
+      const { data, error } = await supabase
         .from('price_history')
         .select(`
-          *,
+          id,
+          created_at,
+          reason,
+          old_price,
+          new_price,
           products (sku, title)
         `)
         .order('created_at', { ascending: false })
-        .limit(5);
+        .limit(5)
+        .eq('user_id', user.id);
+      if (error) throw error;
       return data || [];
     },
+    enabled: !!user,
   });
 
-  const mockChartData = [
-    { name: 'Mon', sales: 4000, profit: 2400 },
-    { name: 'Tue', sales: 3000, profit: 1398 },
-    { name: 'Wed', sales: 2000, profit: 9800 },
-    { name: 'Thu', sales: 2780, profit: 3908 },
-    { name: 'Fri', sales: 1890, profit: 4800 },
-    { name: 'Sat', sales: 2390, profit: 3800 },
-    { name: 'Sun', sales: 3490, profit: 4300 },
-  ];
+  const { data: salesChartData } = useQuery<{
+    name: string;
+    sales: number;
+    profit: number;
+}[]>({ // Define the type here
+    queryKey: ['sales-chart-data', user?.id],
+    queryFn: async () => {
+      if (!user) return [];
+      const { data, error } = await supabase
+        .from('sales')
+        .select('created_at, sale_price, profit')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+      if (!data) return [];
+
+      const dateMap = new Map<string, { sales: number; profit: number }>();
+
+      data.forEach(sale => {
+        const date = new Date(sale.created_at).toLocaleDateString();
+        const existing = dateMap.get(date) || { sales: 0, profit: 0 };
+        existing.sales += sale.sale_price;
+        existing.profit += sale.profit || 0;
+        dateMap.set(date, existing);
+      });
+
+      return Array.from(dateMap.entries()).map(([name, values]) => ({ name, ...values }));
+    },
+    enabled: !!user,
+  });
 
   const buyBoxData = [
     { name: 'Won', value: buyBoxStats?.won || 0, color: 'hsl(var(--success))' },
@@ -129,8 +174,8 @@ export default function Dashboard() {
     <DashboardLayout title="Dashboard" subtitle="Your Takealot repricing overview">
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        {stats.map((stat) => (
-          <Card key={stat.title} className="stat-card">
+        {stats.map((stat, index) => (
+          <Card key={index} className="stat-card">
             <CardContent className="p-6">
               <div className="flex items-center justify-between mb-4">
                 <div className="w-12 h-12 rounded-xl bg-accent/10 flex items-center justify-center">
@@ -147,7 +192,7 @@ export default function Dashboard() {
                   {stat.change}
                 </div>
               </div>
-              <p className="text-2xl font-display font-bold text-foreground">{stat.value}</p>
+              <p className="text-2xl font-display font-bold text-foreground">{String(stat.value)}</p>
               <p className="text-sm text-muted-foreground mt-1">{stat.title}</p>
             </CardContent>
           </Card>
@@ -164,7 +209,7 @@ export default function Dashboard() {
           <CardContent>
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={mockChartData}>
+                <AreaChart data={salesChartData}>
                   <defs>
                     <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="hsl(var(--accent))" stopOpacity={0.3}/>
@@ -230,7 +275,7 @@ export default function Dashboard() {
         <CardContent>
           <div className="space-y-4">
             {priceHistory && priceHistory.length > 0 ? (
-              priceHistory.map((item: any) => (
+              priceHistory.map((item: PriceHistoryItem) => (
                 <div key={item.id} className="flex items-center justify-between py-3 border-b border-border last:border-0">
                   <div className="flex items-center gap-4">
                     <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center">

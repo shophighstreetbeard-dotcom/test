@@ -14,6 +14,17 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 
+interface Profile {
+  id: string;
+  user_id: string;
+  email: string | null;
+  full_name: string | null;
+  company_name: string | null;
+  takealot_api_key: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export default function Settings() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -21,7 +32,7 @@ export default function Settings() {
   const [companyName, setCompanyName] = useState('');
   const [takealotApiKey, setTakealotApiKey] = useState('');
 
-  const { data: profile, isLoading } = useQuery({
+  const { data: profile, isLoading } = useQuery<Profile>({ // Specify type here
     queryKey: ['profile', user?.id],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -30,12 +41,12 @@ export default function Settings() {
         .eq('user_id', user?.id)
         .maybeSingle();
       if (error) throw error;
-      return data;
+      return data as Profile; // Cast data here
     },
     enabled: !!user?.id,
   });
 
-  const { data: lastSync } = useQuery({
+  const { data: lastSync } = useQuery<string>({ // Specify type here
     queryKey: ['last-sync', user?.id],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -46,7 +57,7 @@ export default function Settings() {
         .limit(1)
         .maybeSingle();
       if (error) throw error;
-      return data?.last_synced_at;
+      return data?.last_synced_at as string; // Cast data here
     },
     enabled: !!user?.id,
   });
@@ -75,7 +86,7 @@ export default function Settings() {
       queryClient.invalidateQueries({ queryKey: ['profile'] });
       toast.success('Settings saved successfully');
     },
-    onError: (error: any) => {
+    onError: (error: Error) => {
       toast.error(error.message);
     },
   });
@@ -227,8 +238,8 @@ export default function Settings() {
                       <strong className="text-foreground">Important:</strong> Copy your API key exactly as shown (it usually starts with a long alphanumeric string)
                     </li>
                     <li>Add the webhook URL above to receive real-time updates (optional)</li>
-                    <li>Click "Save API Key" below, then go to the Products page</li>
-                    <li>Click "Sync from Takealot" to import your products</li>
+                    <li>Click \"Save API Key\" below, then go to the Products page</li>
+                    <li>Click \"Sync from Takealot\" to import your products</li>
                   </ol>
                 </div>
                 <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 p-4">
